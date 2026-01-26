@@ -1,24 +1,52 @@
 <?php
 /**
  * SMS Templates Functions
+ * User-based filtering
  */
 
 require_once __DIR__ . '/database.php';
+require_once __DIR__ . '/auth.php';
 
 class Templates {
     private $db;
+    private $userId;
+    private $isAdmin;
 
     public function __construct() {
         $this->db = Database::getInstance();
+        $auth = Auth::getInstance();
+        $this->userId = $auth->getUserId();
+        $this->isAdmin = $auth->isAdmin();
+    }
+
+    /**
+     * Get user filter
+     */
+    private function getUserFilter() {
+        if ($this->isAdmin) {
+            return ['where' => '1=1', 'params' => []];
+        }
+        return [
+            'where' => '(user_id = ? OR user_id IS NULL)',
+            'params' => [$this->userId]
+        ];
     }
 
     /**
      * Get all templates
      */
     public function getAll($activeOnly = true) {
-        $where = $activeOnly ? 'WHERE is_active = 1' : '';
+        $userFilter = $this->getUserFilter();
+        $where = $userFilter['where'];
+        $params = $userFilter['params'];
+        
+        if ($activeOnly) {
+            $where .= ' AND is_active = 1';
+        }
+        
         return $this->db->fetchAll(
-            "SELECT * FROM templates {$where} ORDER BY usage_count DESC, name ASC"
+            "SELECT * FROM templates WHERE {$where} ORDER BY usage_count DESC, name ASC",
+            $params
         );
     }
 
@@ -26,21 +54,21 @@ class Templates {
      * Get single template
      */
     public function get($id) {
-        return $this->db->fetchOne("SELECT * FROM templates WHERE id = ?", [$id]);
+        $userFilter = $this->getUserFilter();
+        return $this->db->fetchOne(
+            "SELECT * FROM templates WHERE id = ? AND {$userFilter['where']}",
+            array_merge([$id], $userFilter['params'])
+        );
     }
 
     /**
      * Create template
      */
     public function create($nameOrData, $content = null) {
-        // Support both formats: create($data) or create($name, $content)
         if (is_array($nameOrData)) {
             $data = $nameOrData;
         } else {
-            $data = [
-                'name' => $nameOrData,
-                'content' => $content
-            ];
+            $data = ['name' => $nameOrData, 'content' => $content];
         }
         
         // Extract variables from content
@@ -48,9 +76,10 @@ class Templates {
         $variables = array_unique($matches[1]);
 
         $id = $this->db->insert('templates', [
+            'user_id' => $this->userId,
             'name' => $data['name'],
             'content' => $data['content'],
-            'variables' => json_encode($variables),
+            'variables' => json_encode(array_values($variables)),
             'is_active' => 1
         ]);
 
@@ -61,14 +90,18 @@ class Templates {
      * Update template
      */
     public function update($id, $data) {
-        // Extract variables from content
+        $template = $this->get($id);
+        if (!$template) {
+            return ['success' => false, 'error' => 'Template not found'];
+        }
+
         preg_match_all('/\{([a-z_]+)\}/i', $data['content'], $matches);
         $variables = array_unique($matches[1]);
 
         $this->db->update('templates', [
             'name' => $data['name'],
             'content' => $data['content'],
-            'variables' => json_encode($variables)
+            'variables' => json_encode(array_values($variables))
         ], 'id = ?', [$id]);
 
         return ['success' => true];
@@ -78,6 +111,10 @@ class Templates {
      * Delete template (soft)
      */
     public function delete($id) {
+        $template = $this->get($id);
+        if (!$template) {
+            return ['success' => false, 'error' => 'Template not found'];
+        }
         $this->db->update('templates', ['is_active' => 0], 'id = ?', [$id]);
         return ['success' => true];
     }
@@ -86,6 +123,10 @@ class Templates {
      * Restore template
      */
     public function restore($id) {
+        $template = $this->get($id);
+        if (!$template) {
+            return ['success' => false, 'error' => 'Template not found'];
+        }
         $this->db->update('templates', ['is_active' => 1], 'id = ?', [$id]);
         return ['success' => true];
     }
@@ -94,6 +135,10 @@ class Templates {
      * Permanently delete
      */
     public function permanentDelete($id) {
+        $template = $this->get($id);
+        if (!$template) {
+            return ['success' => false, 'error' => 'Template not found'];
+        }
         $this->db->delete('templates', 'id = ?', [$id]);
         return ['success' => true];
     }

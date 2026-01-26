@@ -1,11 +1,16 @@
 <?php
 /**
  * Gateways Management / Управление шлюзами
+ * Admin only
  */
 
 require_once __DIR__ . '/includes/database.php';
+require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/lang.php';
 require_once __DIR__ . '/templates/layout.php';
+
+// Require admin access
+Auth::getInstance()->requireAdmin();
 
 $db = Database::getInstance();
 

@@ -4,25 +4,55 @@
  */
 
 require_once __DIR__ . '/includes/database.php';
+require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/sms.php';
 require_once __DIR__ . '/includes/lang.php';
 require_once __DIR__ . '/templates/layout.php';
 
 $db = Database::getInstance();
+$auth = Auth::getInstance();
 $sms = new SMS();
 
-// Get statistics
-$stats = $sms->getStats();
+// Get user's allowed port numbers for filtering
+$allowedPortNumbers = null;
+if (!$auth->isAdmin()) {
+    $allowedPorts = $auth->getAllowedPorts('can_receive');
+    $allowedPortNumbers = array_column($allowedPorts, 'port_number');
+}
 
-// Recent inbox
-$recentInbox = $db->fetchAll(
-    "SELECT * FROM inbox ORDER BY received_at DESC LIMIT 5"
-);
-
-// Recent outbox
-$recentOutbox = $db->fetchAll(
-    "SELECT * FROM outbox ORDER BY sent_at DESC LIMIT 5"
-);
+// Get filtered statistics
+if ($auth->isAdmin()) {
+    $stats = $sms->getStats();
+    $recentInbox = $db->fetchAll("SELECT * FROM inbox ORDER BY received_at DESC LIMIT 5");
+    $recentOutbox = $db->fetchAll("SELECT * FROM outbox ORDER BY sent_at DESC LIMIT 5");
+} else {
+    // Filter by allowed ports
+    if (empty($allowedPortNumbers)) {
+        $stats = ['inbox_total' => 0, 'inbox_today' => 0, 'outbox_total' => 0, 'outbox_today' => 0, 'pending' => 0, 'unread' => 0];
+        $recentInbox = [];
+        $recentOutbox = [];
+    } else {
+        $placeholders = implode(',', array_fill(0, count($allowedPortNumbers), '?'));
+        
+        $stats = [
+            'inbox_total' => $db->fetchOne("SELECT COUNT(*) as cnt FROM inbox WHERE port IN ({$placeholders})", $allowedPortNumbers)['cnt'] ?? 0,
+            'inbox_today' => $db->fetchOne("SELECT COUNT(*) as cnt FROM inbox WHERE port IN ({$placeholders}) AND DATE(received_at) = CURDATE()", $allowedPortNumbers)['cnt'] ?? 0,
+            'outbox_total' => $db->fetchOne("SELECT COUNT(*) as cnt FROM outbox WHERE port IN ({$placeholders})", $allowedPortNumbers)['cnt'] ?? 0,
+            'outbox_today' => $db->fetchOne("SELECT COUNT(*) as cnt FROM outbox WHERE port IN ({$placeholders}) AND DATE(sent_at) = CURDATE()", $allowedPortNumbers)['cnt'] ?? 0,
+            'pending' => $db->fetchOne("SELECT COUNT(*) as cnt FROM outbox WHERE port IN ({$placeholders}) AND status = 'pending'", $allowedPortNumbers)['cnt'] ?? 0,
+            'unread' => $db->fetchOne("SELECT COUNT(*) as cnt FROM inbox WHERE port IN ({$placeholders}) AND is_read = 0", $allowedPortNumbers)['cnt'] ?? 0,
+        ];
+        
+        $recentInbox = $db->fetchAll(
+            "SELECT * FROM inbox WHERE port IN ({$placeholders}) ORDER BY received_at DESC LIMIT 5",
+            $allowedPortNumbers
+        );
+        $recentOutbox = $db->fetchAll(
+            "SELECT * FROM outbox WHERE port IN ({$placeholders}) ORDER BY sent_at DESC LIMIT 5",
+            $allowedPortNumbers
+        );
+    }
+}
 
 renderHeader(__('dashboard'), 'dashboard');
 ?>

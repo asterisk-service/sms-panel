@@ -1,11 +1,12 @@
 <?php
 /**
- * SMS Panel - Installation Script
+ * SMS Panel - Installation Script v1.2
  * 
  * This script will:
  * 1. Check system requirements
  * 2. Create database and tables
- * 3. Set up initial configuration
+ * 3. Create admin user
+ * 4. Set up initial gateway (optional)
  */
 
 error_reporting(E_ALL);
@@ -43,7 +44,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $pdo->exec($stmt);
                     } catch (PDOException $e) {
                         // Ignore some errors like "table already exists"
-                        if (strpos($e->getMessage(), 'already exists') === false) {
+                        if (strpos($e->getMessage(), 'already exists') === false &&
+                            strpos($e->getMessage(), 'Duplicate') === false) {
                             // Log but continue
                         }
                     }
@@ -68,7 +70,7 @@ define('SPAM_INTERVAL', 60);
 
 // Application Settings
 define('APP_NAME', 'SMS Panel');
-define('APP_VERSION', '1.1');
+define('APP_VERSION', '1.2');
 define('TIMEZONE', 'Europe/Moscow');
 
 date_default_timezone_set(TIMEZONE);
@@ -84,11 +86,53 @@ ini_set('display_errors', 1);
             @mkdir(__DIR__ . '/logs', 0755, true);
             @mkdir(__DIR__ . '/exports', 0755, true);
             
-            header('Location: install.php?step=gateway');
+            header('Location: install.php?step=admin');
             exit;
             
         } catch (PDOException $e) {
             $error = 'Database error: ' . $e->getMessage();
+        }
+    }
+    
+    if ($step === 'admin') {
+        $adminUser = trim($_POST['admin_user'] ?? 'admin');
+        $adminPass = $_POST['admin_pass'] ?? '';
+        $adminName = trim($_POST['admin_name'] ?? 'Administrator');
+        $adminEmail = trim($_POST['admin_email'] ?? '');
+        
+        if (empty($adminUser) || empty($adminPass)) {
+            $error = 'Username and password are required';
+        } elseif (strlen($adminPass) < 6) {
+            $error = 'Password must be at least 6 characters';
+        } else {
+            try {
+                require_once __DIR__ . '/includes/config.php';
+                require_once __DIR__ . '/includes/database.php';
+                
+                $db = Database::getInstance();
+                
+                // Check if admin already exists
+                $existing = $db->fetchOne("SELECT id FROM users WHERE username = ?", [$adminUser]);
+                if ($existing) {
+                    // Update existing admin
+                    $db->query(
+                        "UPDATE users SET password = ?, name = ?, email = ? WHERE username = ?",
+                        [password_hash($adminPass, PASSWORD_DEFAULT), $adminName, $adminEmail ?: null, $adminUser]
+                    );
+                } else {
+                    // Create new admin
+                    $db->query(
+                        "INSERT INTO users (username, password, name, email, role, is_active) VALUES (?, ?, ?, ?, 'admin', 1)",
+                        [$adminUser, password_hash($adminPass, PASSWORD_DEFAULT), $adminName, $adminEmail ?: null]
+                    );
+                }
+                
+                header('Location: install.php?step=gateway');
+                exit;
+                
+            } catch (Exception $e) {
+                $error = 'Error: ' . $e->getMessage();
+            }
         }
     }
     
@@ -174,7 +218,7 @@ function checkRequirements() {
     $checks['config_writable'] = [
         'name' => 'Config file writable',
         'ok' => is_writable(__DIR__ . '/includes/config.php') || is_writable(__DIR__ . '/includes'),
-        'value' => is_writable(__DIR__ . '/includes/config.php') ? 'Writable' : 'Not writable'
+        'value' => is_writable(__DIR__ . '/includes/config.php') ? 'Writable' : (is_writable(__DIR__ . '/includes') ? 'Will create' : 'Not writable')
     ];
     
     $checks['logs_dir'] = [
@@ -204,23 +248,30 @@ $allOk = !in_array(false, array_column($checks, 'ok'));
         .step-indicator { display: flex; justify-content: center; margin-bottom: 30px; }
         .step { width: 40px; height: 40px; border-radius: 50%; background: #dee2e6; 
                 display: flex; align-items: center; justify-content: center; margin: 0 10px;
-                font-weight: bold; color: #6c757d; }
+                font-weight: bold; color: #6c757d; position: relative; }
         .step.active { background: #3498db; color: white; }
         .step.completed { background: #27ae60; color: white; }
+        .step-line { width: 40px; height: 2px; background: #dee2e6; align-self: center; }
+        .step-line.completed { background: #27ae60; }
     </style>
 </head>
 <body>
     <div class="install-container">
         <div class="text-center mb-4">
             <h2><i class="bi bi-chat-dots text-primary"></i> SMS Panel</h2>
-            <p class="text-muted">Installation Wizard</p>
+            <p class="text-muted">Installation Wizard v1.2</p>
         </div>
         
         <div class="step-indicator">
             <div class="step <?= $step === 'check' ? 'active' : ($step !== 'check' ? 'completed' : '') ?>">1</div>
-            <div class="step <?= $step === 'database' ? 'active' : (in_array($step, ['gateway', 'complete']) ? 'completed' : '') ?>">2</div>
-            <div class="step <?= $step === 'gateway' ? 'active' : ($step === 'complete' ? 'completed' : '') ?>">3</div>
-            <div class="step <?= $step === 'complete' ? 'active' : '' ?>">4</div>
+            <div class="step-line <?= in_array($step, ['admin', 'gateway', 'complete']) ? 'completed' : '' ?>"></div>
+            <div class="step <?= $step === 'database' ? 'active' : (in_array($step, ['admin', 'gateway', 'complete']) ? 'completed' : '') ?>">2</div>
+            <div class="step-line <?= in_array($step, ['gateway', 'complete']) ? 'completed' : '' ?>"></div>
+            <div class="step <?= $step === 'admin' ? 'active' : (in_array($step, ['gateway', 'complete']) ? 'completed' : '') ?>">3</div>
+            <div class="step-line <?= $step === 'complete' ? 'completed' : '' ?>"></div>
+            <div class="step <?= $step === 'gateway' ? 'active' : ($step === 'complete' ? 'completed' : '') ?>">4</div>
+            <div class="step-line <?= $step === 'complete' ? 'completed' : '' ?>"></div>
+            <div class="step <?= $step === 'complete' ? 'active' : '' ?>">5</div>
         </div>
         
         <?php if ($error): ?>
@@ -288,9 +339,38 @@ $allOk = !in_array(false, array_column($checks, 'ok'));
                 </form>
             </div>
             
+            <?php elseif ($step === 'admin'): ?>
+            <div class="card-header">
+                <i class="bi bi-person-circle me-2"></i> Step 3: Admin Account
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    <div class="mb-3">
+                        <label class="form-label">Username *</label>
+                        <input type="text" name="admin_user" class="form-control" value="admin" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Password *</label>
+                        <input type="password" name="admin_pass" class="form-control" required minlength="6">
+                        <small class="text-muted">Minimum 6 characters</small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Full Name</label>
+                        <input type="text" name="admin_name" class="form-control" value="Administrator">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Email</label>
+                        <input type="email" name="admin_email" class="form-control">
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">
+                        Create Admin <i class="bi bi-arrow-right"></i>
+                    </button>
+                </form>
+            </div>
+            
             <?php elseif ($step === 'gateway'): ?>
             <div class="card-header">
-                <i class="bi bi-hdd-network me-2"></i> Step 3: Gateway Configuration
+                <i class="bi bi-hdd-network me-2"></i> Step 4: Gateway Configuration
             </div>
             <div class="card-body">
                 <form method="post">
@@ -328,16 +408,16 @@ $allOk = !in_array(false, array_column($checks, 'ok'));
                     <div class="mb-3">
                         <label class="form-label">Number of Channels</label>
                         <select name="gw_channels" class="form-select">
-                            <option value="4">4 channels (1 module)</option>
-                            <option value="8" selected>8 channels (2 modules)</option>
-                            <option value="12">12 channels (3 modules)</option>
-                            <option value="16">16 channels (4 modules)</option>
-                            <option value="32">32 channels (8 modules)</option>
-                            <option value="64">64 channels (16 modules)</option>
+                            <option value="1">1 channel</option>
+                            <option value="4">4 channels</option>
+                            <option value="8" selected>8 channels</option>
+                            <option value="16">16 channels</option>
+                            <option value="32">32 channels</option>
+                            <option value="64">64 channels</option>
                         </select>
                     </div>
                     <button type="submit" class="btn btn-primary w-100">
-                        Save & Continue <i class="bi bi-arrow-right"></i>
+                        Save Gateway <i class="bi bi-arrow-right"></i>
                     </button>
                     <a href="?step=complete" class="btn btn-link w-100 mt-2">
                         Skip - I'll configure later
@@ -357,19 +437,23 @@ $allOk = !in_array(false, array_column($checks, 'ok'));
                 </p>
                 
                 <div class="alert alert-warning text-start">
-                    <strong><i class="bi bi-exclamation-triangle"></i> Security:</strong><br>
-                    Please delete <code>install.php</code> after installation.
+                    <strong><i class="bi bi-exclamation-triangle"></i> Security Reminder:</strong><br>
+                    <ul class="mb-0 mt-2">
+                        <li>Delete <code>install.php</code> after installation</li>
+                        <li>Use HTTPS in production</li>
+                        <li>Set proper file permissions</li>
+                    </ul>
                 </div>
                 
-                <a href="index.php" class="btn btn-success btn-lg">
-                    <i class="bi bi-box-arrow-in-right me-2"></i> Open SMS Panel
+                <a href="login.php" class="btn btn-success btn-lg">
+                    <i class="bi bi-box-arrow-in-right me-2"></i> Login to SMS Panel
                 </a>
             </div>
             <?php endif; ?>
         </div>
         
         <p class="text-center text-muted mt-3">
-            <small>SMS Panel v1.1 &copy; <?= date('Y') ?></small>
+            <small>SMS Panel v1.2 &copy; <?= date('Y') ?></small>
         </p>
     </div>
 </body>

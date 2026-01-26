@@ -1,17 +1,18 @@
 <?php
 /**
  * SMS Panel Configuration
- * GSM Gateway SMS Management System
+ * 
+ * Copy this file to config.php and edit your settings
  */
 
 // Database Configuration
 define('DB_HOST', 'localhost');
-define('DB_USER', 'root');
-define('DB_PASS', '');
+define('DB_USER', 'sms_panel');
+define('DB_PASS', 'your_password_here');
 define('DB_NAME', 'sms_panel');
 
-// Anti-Spam Configuration (default, can be changed in Settings)
-define('SPAM_INTERVAL', 60); // seconds between SMS to same number
+// Anti-Spam Configuration
+define('SPAM_INTERVAL', 60); // seconds between duplicate messages
 
 // Application Settings
 define('APP_NAME', 'SMS Panel');

@@ -1,12 +1,17 @@
 <?php
 /**
  * Gateway Ports / Порты шлюза
+ * Admin only
  */
 
 require_once __DIR__ . '/includes/database.php';
+require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/sms.php';
 require_once __DIR__ . '/includes/lang.php';
 require_once __DIR__ . '/templates/layout.php';
+
+// Require admin access
+Auth::getInstance()->requireAdmin();
 
 $db = Database::getInstance();
 $sms = new SMS();

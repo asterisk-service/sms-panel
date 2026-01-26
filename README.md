@@ -1,19 +1,19 @@
 # SMS Panel
 
-Web-based SMS management panel for OpenVox and GoIP GSM gateways.
+Web-based SMS management panel for OpenVox and GoIP GSM gateways with multi-user support.
 
 ![PHP](https://img.shields.io/badge/PHP-7.4+-blue)
 ![MySQL](https://img.shields.io/badge/MySQL-5.7+-orange)
 ![Bootstrap](https://img.shields.io/badge/Bootstrap-5.3-purple)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-## Screenshots
-
-| Dashboard | Send SMS | Bulk Campaign |
-|-----------|----------|---------------|
-| Real-time statistics | Single/multiple recipients | Progress tracking |
-
 ## Features
+
+### 🔐 User Authentication & Authorization
+- **User Roles** - Admin and User roles with different permissions
+- **Port-based Access** - Assign specific ports to users (send/receive)
+- **Data Isolation** - Contacts, templates, groups isolated per user
+- **Session Management** - Secure login/logout system
 
 ### 📤 SMS Management
 - **Send SMS** - Single message to one or multiple recipients
@@ -25,6 +25,7 @@ Web-based SMS management panel for OpenVox and GoIP GSM gateways.
 - **Incoming Messages** - View received SMS with sender info
 - **Sent Messages** - Track all outgoing messages with delivery status
 - **Search & Filter** - Find messages by phone, content, date
+- **User Filtering** - Users see only messages from their allowed ports
 
 ### 🔌 Gateway Support
 - **OpenVox** - VS-GW1600, VS-GW2120 and other GSM gateways
@@ -38,9 +39,9 @@ Web-based SMS management panel for OpenVox and GoIP GSM gateways.
 - **Usage Statistics** - Track messages sent per port
 - **Port Rotation** - Random, linear, or specific port selection
 
-### 👥 Contacts
-- **Contact Database** - Store names and phone numbers
-- **Groups** - Organize contacts into groups
+### 👥 Contacts & Groups
+- **Contact Database** - Store names and phone numbers (per user)
+- **Groups** - Organize contacts into groups (per user)
 - **Import** - Bulk import from CSV files
 - **Quick Send** - Send SMS directly from contact list
 
@@ -81,13 +82,19 @@ http://your-server/sms-panel/install.php
 3. **Follow the wizard**:
    - Step 1: System requirements check
    - Step 2: Database configuration
-   - Step 3: First gateway setup
+   - Step 3: First gateway setup (optional)
    - Step 4: Complete!
 
-4. **Delete installer** (important!):
+4. **Login** with default credentials:
+   - Username: `admin`
+   - Password: `admin123`
+
+5. **Delete installer** (important!):
 ```bash
 rm /var/www/html/sms-panel/install.php
 ```
+
+6. **Change admin password** in Users management
 
 ### Option 2: Manual Installation
 
@@ -113,7 +120,7 @@ define('DB_PASS', 'your_password');
 define('DB_NAME', 'sms_panel');
 define('SPAM_INTERVAL', 60);
 define('APP_NAME', 'SMS Panel');
-define('APP_VERSION', '1.1');
+define('APP_VERSION', '1.2');
 define('TIMEZONE', 'Europe/Moscow');
 date_default_timezone_set(TIMEZONE);
 ```
@@ -122,6 +129,21 @@ date_default_timezone_set(TIMEZONE);
 ```bash
 chmod 755 logs/ exports/
 chown -R www-data:www-data logs/ exports/
+```
+
+5. **Login** with `admin` / `admin123`
+
+### Upgrading from v1.1
+
+Run the migration script:
+```bash
+mysql -u root -p sms_panel < migrations/001_add_user_auth.sql
+```
+
+Or execute SQL manually:
+```sql
+-- Add user tables
+source migrations/001_add_user_auth.sql;
 ```
 
 ### Nginx Configuration
@@ -149,11 +171,45 @@ server {
 }
 ```
 
+## User Management
+
+### User Roles
+
+| Role | Permissions |
+|------|-------------|
+| **Admin** | Full access to all features, all data, user management |
+| **User** | Access only to assigned ports and own data |
+
+### Creating Users (Admin only)
+
+1. Go to **Users** in admin menu
+2. Click **Add User**
+3. Fill in user details:
+   - Username and password
+   - Display name and email
+   - Role (Admin/User)
+4. **Assign port permissions**:
+   - Select which ports the user can access
+   - Set Send and/or Receive permissions per port
+5. Click **Save**
+
+### Data Isolation
+
+| Data Type | Admin View | User View |
+|-----------|------------|-----------|
+| Dashboard | All ports statistics | Only allowed ports |
+| Inbox | All messages | Messages from allowed ports |
+| Outbox | All messages | Messages from allowed ports |
+| Contacts | All contacts | Only own contacts |
+| Groups | All groups | Only own groups |
+| Templates | All templates | Only own templates |
+| Campaigns | All campaigns | Only own campaigns |
+
 ## Configuration
 
-### Adding a Gateway
+### Adding a Gateway (Admin only)
 
-1. Navigate to **Gateways** (sidebar menu)
+1. Navigate to **Gateways** (admin menu)
 2. Click **Add Gateway**
 3. Fill in the form:
 
@@ -182,9 +238,7 @@ OpenVox uses modules with **4 ports each**:
 | 3 | gsm-1.3 | Module 1 |
 | 4 | gsm-1.4 | Module 1 |
 | 5 | gsm-2.1 | Module 2 |
-| 6 | gsm-2.2 | Module 2 |
 | ... | ... | ... |
-| 12 | gsm-3.4 | Module 3 |
 
 ### GoIP Port Format
 
@@ -226,8 +280,6 @@ Create templates with placeholders:
 Hello {name}! Your code is {code}. Valid for 5 minutes.
 ```
 
-Available variables depend on contact data and CSV columns.
-
 ## API
 
 ### Receiving SMS (Webhook)
@@ -258,26 +310,17 @@ curl -X POST http://your-server/sms-panel/api/receive.php \
 {"success": true, "message_id": 123}
 ```
 
-### OpenVox Webhook Setup
-
-In OpenVox web interface:
-1. Go to **SMS** → **SMS Settings**
-2. Set **HTTP URL** to your receive endpoint
-3. Enable **Forward SMS to HTTP**
-
 ## File Structure
 
 ```
 sms-panel/
 ├── ajax/                   # AJAX handlers
-│   ├── campaign_send.php   # Campaign message sender
-│   ├── get_group_phones.php
-│   └── search_contacts.php
 ├── api/
 │   └── receive.php         # Incoming SMS webhook
 ├── includes/
 │   ├── config.php          # Configuration
 │   ├── database.php        # Database class
+│   ├── auth.php            # Authentication
 │   ├── sms.php             # SMS sending logic
 │   ├── campaign.php        # Campaign management
 │   ├── contacts.php        # Contact management
@@ -286,11 +329,16 @@ sms-panel/
 │   └── lang/
 │       ├── en.php          # English
 │       └── ru.php          # Russian
+├── migrations/
+│   └── 001_add_user_auth.sql  # v1.2 migration
 ├── templates/
 │   └── layout.php          # HTML layout
-├── logs/                   # SMS logs (auto-created)
+├── logs/                   # SMS logs
 ├── exports/                # Exported files
 ├── index.php               # Dashboard
+├── login.php               # Login page
+├── logout.php              # Logout handler
+├── users.php               # User management (admin)
 ├── send.php                # Send SMS
 ├── inbox.php               # Incoming messages
 ├── outbox.php              # Sent messages
@@ -298,9 +346,9 @@ sms-panel/
 ├── contacts.php            # Contact list
 ├── groups.php              # Contact groups
 ├── templates.php           # Message templates
-├── gateways.php            # Gateway management
-├── ports.php               # Port management
-├── settings.php            # System settings
+├── gateways.php            # Gateway management (admin)
+├── ports.php               # Port management (admin)
+├── settings.php            # System settings (admin)
 ├── install.php             # Installation wizard
 ├── schema.sql              # Database schema
 └── README.md
@@ -308,57 +356,48 @@ sms-panel/
 
 ## Troubleshooting
 
+### Cannot login
+
+- ✅ Default credentials: `admin` / `admin123`
+- ✅ Check if users table exists: `SELECT * FROM users;`
+- ✅ Reset password via SQL:
+```sql
+UPDATE users SET password = '$2y$10$N9qo8uLOickgx2ZMRZoMyeNw/O3z5BKQXB1KdJH5LrM3F5z2DlWHW' WHERE username = 'admin';
+```
+
+### User sees no data
+
+- ✅ Check user has port permissions assigned
+- ✅ Verify ports have `can_send` or `can_receive` enabled
+- ✅ Admin can see all data; check user role
+
 ### Cannot connect to gateway
 
 - ✅ Verify gateway IP is reachable: `ping 192.168.1.100`
-- ✅ Check HTTP port is open: `curl http://192.168.1.100/`
+- ✅ Check HTTP port is open
 - ✅ Verify credentials in gateway web interface
-- ✅ Ensure gateway HTTP API is enabled
 
 ### Messages not sending
 
 - ✅ Check `logs/sms_YYYY-MM-DD.log` for errors
 - ✅ Verify port has active SIM card
 - ✅ Check SIM balance and network signal
-- ✅ Test gateway directly via its web interface
-
-### Incoming SMS not received
-
-- ✅ Configure webhook URL in gateway settings
-- ✅ Ensure server is reachable from gateway network
-- ✅ Check `api/receive.php` permissions (755)
-- ✅ Look for errors in web server logs
-
-### Database connection failed
-
-- ✅ Verify MySQL is running: `systemctl status mysql`
-- ✅ Check credentials in `includes/config.php`
-- ✅ Test connection: `mysql -u user -p database`
 
 ## Security Recommendations
 
 1. **Delete `install.php`** after installation
-2. **Use HTTPS** in production
-3. **Restrict access** by IP if possible
-4. **Strong passwords** for database and gateways
-5. **Regular backups** of database
-6. **Keep software updated** (PHP, MySQL, web server)
-7. **Set proper permissions**:
+2. **Change default admin password** immediately
+3. **Use HTTPS** in production
+4. **Restrict access** by IP if possible
+5. **Strong passwords** for database and gateways
+6. **Regular backups** of database
+7. **Keep software updated** (PHP, MySQL, web server)
+8. **Set proper permissions**:
    ```bash
    find . -type f -exec chmod 644 {} \;
    find . -type d -exec chmod 755 {} \;
    chmod 755 logs/ exports/
    ```
-
-## Contributing
-
-Pull requests are welcome! For major changes, please open an issue first.
-
-1. Fork the repository
-2. Create feature branch: `git checkout -b feature/amazing-feature`
-3. Commit changes: `git commit -m 'Add amazing feature'`
-4. Push to branch: `git push origin feature/amazing-feature`
-5. Open a Pull Request
 
 ## License
 
@@ -366,15 +405,31 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Changelog
 
-### v1.1 (2024-01)
+### v1.2 (2025-01)
+- **User authentication system**
+  - Login/logout functionality
+  - Admin and User roles
+  - Session management
+- **Port-based permissions**
+  - Assign specific ports to users
+  - Separate send/receive permissions
+- **Data isolation**
+  - Contacts per user
+  - Groups per user
+  - Templates per user
+  - Campaigns per user
+- **Dashboard filtering** by allowed ports
+- **Inbox/Outbox filtering** by allowed ports
+- **Migration script** for upgrading from v1.1
+
+### v1.1 (2025-01)
 - Multiple gateway support
 - Gateway priority routing
 - Per-gateway port management
 - Bulk campaign gateway selection
 - Installation wizard
-- Improved documentation
 
-### v1.0 (2024-01)
+### v1.0 (2025-01)
 - Initial release
 - OpenVox and GoIP support
 - Send/receive SMS

@@ -4,13 +4,22 @@
  */
 
 require_once __DIR__ . '/includes/sms.php';
+require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/lang.php';
 
 $sms = new SMS();
 $db = Database::getInstance();
+$auth = Auth::getInstance();
 
 $success = '';
 $error = '';
+
+// Get user's allowed port numbers for filtering
+$allowedPortNumbers = null;
+if (!$auth->isAdmin()) {
+    $allowedPorts = $auth->getAllowedPorts('can_send');
+    $allowedPortNumbers = array_column($allowedPorts, 'port_number');
+}
 
 // Handle delete multiple
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
@@ -53,7 +62,7 @@ $page = max(1, (int)($_GET['page'] ?? 1));
 $search = $_GET['search'] ?? '';
 $status = $_GET['status'] ?? '';
 
-$data = $sms->getOutbox($page, 20, $search, $status);
+$data = $sms->getOutbox($page, 20, $search, $status, $allowedPortNumbers);
 
 renderHeader(__('outbox'), 'outbox');
 ?>

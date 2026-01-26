@@ -1,16 +1,36 @@
 <?php
 /**
  * Contacts (Phone Book) Functions
- * CRUD, Import, Export
+ * User-based filtering
  */
 
 require_once __DIR__ . '/database.php';
+require_once __DIR__ . '/auth.php';
 
 class Contacts {
     private $db;
+    private $userId;
+    private $isAdmin;
 
     public function __construct() {
         $this->db = Database::getInstance();
+        $auth = Auth::getInstance();
+        $this->userId = $auth->getUserId();
+        $this->isAdmin = $auth->isAdmin();
+    }
+
+    /**
+     * Get user filter for queries
+     */
+    private function getUserFilter($alias = '') {
+        $prefix = $alias ? "{$alias}." : '';
+        if ($this->isAdmin) {
+            return ['where' => '1=1', 'params' => []];
+        }
+        return [
+            'where' => "({$prefix}user_id = ? OR {$prefix}user_id IS NULL)",
+            'params' => [$this->userId]
+        ];
     }
 
     /**
@@ -18,8 +38,9 @@ class Contacts {
      */
     public function getAll($page = 1, $perPage = 20, $search = '', $groupId = null) {
         $offset = ($page - 1) * $perPage;
-        $where = 'c.is_active = 1';
-        $params = [];
+        $userFilter = $this->getUserFilter('c');
+        $where = "c.is_active = 1 AND {$userFilter['where']}";
+        $params = $userFilter['params'];
 
         if ($search) {
             $where .= " AND (c.name LIKE ? OR c.phone_number LIKE ? OR c.company LIKE ? OR c.email LIKE ?)";
@@ -58,12 +79,13 @@ class Contacts {
      * Get single contact
      */
     public function get($id) {
+        $userFilter = $this->getUserFilter('c');
         return $this->db->fetchOne(
             "SELECT c.*, g.name as group_name 
              FROM contacts c 
              LEFT JOIN contact_groups g ON c.group_id = g.id 
-             WHERE c.id = ?",
-            [$id]
+             WHERE c.id = ? AND {$userFilter['where']}",
+            array_merge([$id], $userFilter['params'])
         );
     }
 
@@ -72,9 +94,10 @@ class Contacts {
      */
     public function getByPhone($phone) {
         $phone = preg_replace('/[^0-9+]/', '', $phone);
+        $userFilter = $this->getUserFilter();
         return $this->db->fetchOne(
-            "SELECT * FROM contacts WHERE phone_number = ?",
-            [$phone]
+            "SELECT * FROM contacts WHERE phone_number = ? AND {$userFilter['where']}",
+            array_merge([$phone], $userFilter['params'])
         );
     }
 
@@ -84,18 +107,19 @@ class Contacts {
     public function create($data) {
         $phone = preg_replace('/[^0-9+]/', '', $data['phone_number']);
         
-        // Check for duplicate
+        // Check for duplicate within user's contacts
         if ($this->getByPhone($phone)) {
             return ['success' => false, 'error' => 'Phone number already exists'];
         }
 
         $id = $this->db->insert('contacts', [
+            'user_id' => $this->userId,
             'name' => $data['name'],
             'phone_number' => $phone,
             'company' => $data['company'] ?? null,
             'email' => $data['email'] ?? null,
             'notes' => $data['notes'] ?? null,
-            'group_id' => $data['group_id'] ?? 1,
+            'group_id' => $data['group_id'] ?? null,
             'is_active' => 1
         ]);
 
@@ -107,14 +131,21 @@ class Contacts {
      */
     public function update($id, $data) {
         $phone = preg_replace('/[^0-9+]/', '', $data['phone_number']);
+        $userFilter = $this->getUserFilter();
         
         // Check for duplicate (excluding current)
         $existing = $this->db->fetchOne(
-            "SELECT id FROM contacts WHERE phone_number = ? AND id != ?",
-            [$phone, $id]
+            "SELECT id FROM contacts WHERE phone_number = ? AND id != ? AND {$userFilter['where']}",
+            array_merge([$phone, $id], $userFilter['params'])
         );
         if ($existing) {
             return ['success' => false, 'error' => 'Phone number already exists'];
+        }
+
+        // Verify ownership
+        $contact = $this->get($id);
+        if (!$contact) {
+            return ['success' => false, 'error' => 'Contact not found'];
         }
 
         $this->db->update('contacts', [
@@ -123,7 +154,7 @@ class Contacts {
             'company' => $data['company'] ?? null,
             'email' => $data['email'] ?? null,
             'notes' => $data['notes'] ?? null,
-            'group_id' => $data['group_id'] ?? 1
+            'group_id' => $data['group_id'] ?? null
         ], 'id = ?', [$id]);
 
         return ['success' => true];
@@ -133,6 +164,10 @@ class Contacts {
      * Delete contact (soft delete)
      */
     public function delete($id) {
+        $contact = $this->get($id);
+        if (!$contact) {
+            return ['success' => false, 'error' => 'Contact not found'];
+        }
         $this->db->update('contacts', ['is_active' => 0], 'id = ?', [$id]);
         return ['success' => true];
     }
@@ -141,6 +176,10 @@ class Contacts {
      * Permanently delete contact
      */
     public function permanentDelete($id) {
+        $contact = $this->get($id);
+        if (!$contact) {
+            return ['success' => false, 'error' => 'Contact not found'];
+        }
         $this->db->delete('contacts', 'id = ?', [$id]);
         return ['success' => true];
     }
@@ -158,7 +197,6 @@ class Contacts {
             return ['success' => false, 'error' => 'Cannot open file'];
         }
 
-        // Default mapping
         if (!$mapping) {
             $mapping = [
                 'name' => 0,
@@ -170,7 +208,6 @@ class Contacts {
             ];
         }
 
-        // Read header
         $header = fgetcsv($handle, 0, ';');
         
         $imported = 0;
@@ -185,7 +222,7 @@ class Contacts {
                     'company' => trim($row[$mapping['company']] ?? ''),
                     'email' => trim($row[$mapping['email']] ?? ''),
                     'notes' => trim($row[$mapping['notes']] ?? ''),
-                    'group_id' => (int)($row[$mapping['group_id']] ?? 1) ?: 1
+                    'group_id' => (int)($row[$mapping['group_id']] ?? 0) ?: null
                 ];
 
                 if (empty($data['name']) || empty($data['phone_number'])) {
@@ -217,76 +254,12 @@ class Contacts {
     }
 
     /**
-     * Import contacts from vCard
-     */
-    public function importVCard($filePath) {
-        if (!file_exists($filePath)) {
-            return ['success' => false, 'error' => 'File not found'];
-        }
-
-        $content = file_get_contents($filePath);
-        $cards = explode('END:VCARD', $content);
-        
-        $imported = 0;
-        $skipped = 0;
-        $errors = [];
-
-        foreach ($cards as $card) {
-            if (empty(trim($card))) continue;
-            
-            $data = ['name' => '', 'phone_number' => '', 'email' => '', 'company' => ''];
-            
-            // Parse FN (Full Name)
-            if (preg_match('/FN:(.+)/i', $card, $m)) {
-                $data['name'] = trim($m[1]);
-            } elseif (preg_match('/N:([^;]+);([^;]+)/i', $card, $m)) {
-                $data['name'] = trim($m[2] . ' ' . $m[1]);
-            }
-            
-            // Parse TEL (Phone)
-            if (preg_match('/TEL[^:]*:([+0-9\s\-()]+)/i', $card, $m)) {
-                $data['phone_number'] = preg_replace('/[^0-9+]/', '', $m[1]);
-            }
-            
-            // Parse EMAIL
-            if (preg_match('/EMAIL[^:]*:(.+)/i', $card, $m)) {
-                $data['email'] = trim($m[1]);
-            }
-            
-            // Parse ORG (Company)
-            if (preg_match('/ORG:(.+)/i', $card, $m)) {
-                $data['company'] = trim($m[1]);
-            }
-
-            if (empty($data['name']) || empty($data['phone_number'])) {
-                $skipped++;
-                continue;
-            }
-
-            $data['group_id'] = 1;
-            $result = $this->create($data);
-            if ($result['success']) {
-                $imported++;
-            } else {
-                $skipped++;
-                $errors[] = "{$data['phone_number']}: {$result['error']}";
-            }
-        }
-
-        return [
-            'success' => true,
-            'imported' => $imported,
-            'skipped' => $skipped,
-            'errors' => $errors
-        ];
-    }
-
-    /**
      * Export contacts to CSV
      */
     public function exportCSV($groupId = null) {
-        $where = 'is_active = 1';
-        $params = [];
+        $userFilter = $this->getUserFilter();
+        $where = "is_active = 1 AND {$userFilter['where']}";
+        $params = $userFilter['params'];
         
         if ($groupId) {
             $where .= " AND group_id = ?";
@@ -314,59 +287,28 @@ class Contacts {
         return $output;
     }
 
-    /**
-     * Export contacts to vCard
-     */
-    public function exportVCard($groupId = null) {
-        $where = 'is_active = 1';
-        $params = [];
-        
-        if ($groupId) {
-            $where .= " AND group_id = ?";
-            $params[] = $groupId;
-        }
-
-        $contacts = $this->db->fetchAll(
-            "SELECT * FROM contacts WHERE {$where} ORDER BY name",
-            $params
-        );
-
-        $output = '';
-        foreach ($contacts as $c) {
-            $output .= "BEGIN:VCARD\n";
-            $output .= "VERSION:3.0\n";
-            $output .= "FN:{$c['name']}\n";
-            
-            $nameParts = explode(' ', $c['name'], 2);
-            $lastName = $nameParts[1] ?? '';
-            $firstName = $nameParts[0];
-            $output .= "N:{$lastName};{$firstName};;;\n";
-            
-            $output .= "TEL;TYPE=CELL:{$c['phone_number']}\n";
-            
-            if (!empty($c['email'])) {
-                $output .= "EMAIL:{$c['email']}\n";
-            }
-            if (!empty($c['company'])) {
-                $output .= "ORG:{$c['company']}\n";
-            }
-            if (!empty($c['notes'])) {
-                $output .= "NOTE:{$c['notes']}\n";
-            }
-            
-            $output .= "END:VCARD\n";
-        }
-
-        return $output;
-    }
-
     // === Group Functions ===
 
     /**
-     * Get all groups
+     * Get all groups for current user
      */
     public function getGroups() {
-        return $this->db->fetchAll("SELECT * FROM contact_groups ORDER BY name");
+        $userFilter = $this->getUserFilter();
+        return $this->db->fetchAll(
+            "SELECT * FROM contact_groups WHERE {$userFilter['where']} ORDER BY name",
+            $userFilter['params']
+        );
+    }
+
+    /**
+     * Get single group
+     */
+    public function getGroup($id) {
+        $userFilter = $this->getUserFilter();
+        return $this->db->fetchOne(
+            "SELECT * FROM contact_groups WHERE id = ? AND {$userFilter['where']}",
+            array_merge([$id], $userFilter['params'])
+        );
     }
 
     /**
@@ -374,6 +316,7 @@ class Contacts {
      */
     public function createGroup($name, $description = '', $color = '#3498db') {
         return $this->db->insert('contact_groups', [
+            'user_id' => $this->userId,
             'name' => $name,
             'description' => $description,
             'color' => $color
@@ -384,32 +327,41 @@ class Contacts {
      * Update group
      */
     public function updateGroup($id, $name, $description = '', $color = '#3498db') {
+        $group = $this->getGroup($id);
+        if (!$group) return false;
+        
         $this->db->update('contact_groups', [
             'name' => $name,
             'description' => $description,
             'color' => $color
         ], 'id = ?', [$id]);
+        return true;
     }
 
     /**
      * Delete group
      */
     public function deleteGroup($id) {
-        // Move contacts to default group
-        $this->db->update('contacts', ['group_id' => 1], 'group_id = ?', [$id]);
-        $this->db->delete('contact_groups', 'id = ? AND id != 1', [$id]);
+        $group = $this->getGroup($id);
+        if (!$group) return false;
+        
+        // Move contacts to no group
+        $this->db->update('contacts', ['group_id' => null], 'group_id = ?', [$id]);
+        $this->db->delete('contact_groups', 'id = ?', [$id]);
+        return true;
     }
 
     /**
-     * Get contacts for SMS sending (for autocomplete)
+     * Get contacts for SMS autocomplete
      */
     public function getForSMS($search = '', $limit = 20) {
-        $where = 'is_active = 1';
-        $params = [];
+        $userFilter = $this->getUserFilter();
+        $where = "is_active = 1 AND {$userFilter['where']}";
+        $params = $userFilter['params'];
 
         if ($search) {
             $where .= " AND (name LIKE ? OR phone_number LIKE ?)";
-            $params = ["%{$search}%", "%{$search}%"];
+            $params = array_merge($params, ["%{$search}%", "%{$search}%"]);
         }
 
         return $this->db->fetchAll(
@@ -423,9 +375,11 @@ class Contacts {
      * Get contacts by group for bulk SMS
      */
     public function getByGroup($groupId) {
+        $userFilter = $this->getUserFilter();
         return $this->db->fetchAll(
-            "SELECT phone_number FROM contacts WHERE group_id = ? AND is_active = 1",
-            [$groupId]
+            "SELECT phone_number, name FROM contacts 
+             WHERE group_id = ? AND is_active = 1 AND {$userFilter['where']}",
+            array_merge([$groupId], $userFilter['params'])
         );
     }
 }

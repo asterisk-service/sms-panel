@@ -1,17 +1,38 @@
 <?php
 /**
  * Campaign Class - Bulk SMS Sender
+ * User-based filtering
  */
 
 require_once __DIR__ . '/database.php';
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/auth.php';
 
 class Campaign {
     private $db;
     private $currentPort = 0;
+    private $userId;
+    private $isAdmin;
     
     public function __construct() {
         $this->db = Database::getInstance();
+        $auth = Auth::getInstance();
+        $this->userId = $auth->getUserId();
+        $this->isAdmin = $auth->isAdmin();
+    }
+    
+    /**
+     * Get user filter
+     */
+    private function getUserFilter($alias = '') {
+        $prefix = $alias ? "{$alias}." : '';
+        if ($this->isAdmin) {
+            return ['where' => '1=1', 'params' => []];
+        }
+        return [
+            'where' => "({$prefix}user_id = ? OR {$prefix}user_id IS NULL)",
+            'params' => [$this->userId]
+        ];
     }
     
     /**
@@ -34,11 +55,11 @@ class Campaign {
             return ['success' => false, 'error' => 'At least one phone number is required'];
         }
         
-        // Create campaign
+        // Create campaign with user_id
         $this->db->query(
-            "INSERT INTO campaigns (name, message, total_count, gateway_id, port_mode, specific_port, send_delay, status) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')",
-            [$name, $message, count($numbers), $gatewayId, $portMode, $specificPort, $sendDelay]
+            "INSERT INTO campaigns (user_id, name, message, total_count, gateway_id, port_mode, specific_port, send_delay, status) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft')",
+            [$this->userId, $name, $message, count($numbers), $gatewayId, $portMode, $specificPort, $sendDelay]
         );
         
         $campaignId = $this->db->lastInsertId();
@@ -103,7 +124,11 @@ class Campaign {
      * Get campaign by ID
      */
     public function get($id) {
-        return $this->db->fetchOne("SELECT * FROM campaigns WHERE id = ?", [$id]);
+        $userFilter = $this->getUserFilter();
+        return $this->db->fetchOne(
+            "SELECT * FROM campaigns WHERE id = ? AND {$userFilter['where']}",
+            array_merge([$id], $userFilter['params'])
+        );
     }
     
     /**
@@ -111,11 +136,16 @@ class Campaign {
      */
     public function getAll($page = 1, $perPage = 20) {
         $offset = ($page - 1) * $perPage;
+        $userFilter = $this->getUserFilter();
         
-        $total = $this->db->fetchOne("SELECT COUNT(*) as cnt FROM campaigns")['cnt'];
+        $total = $this->db->fetchOne(
+            "SELECT COUNT(*) as cnt FROM campaigns WHERE {$userFilter['where']}",
+            $userFilter['params']
+        )['cnt'];
+        
         $campaigns = $this->db->fetchAll(
-            "SELECT * FROM campaigns ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            [$perPage, $offset]
+            "SELECT * FROM campaigns WHERE {$userFilter['where']} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            array_merge($userFilter['params'], [$perPage, $offset])
         );
         
         return [

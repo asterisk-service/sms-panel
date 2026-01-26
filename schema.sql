@@ -1,6 +1,7 @@
 -- =====================================================
 -- SMS Panel Database Schema
--- OpenVox GSM Gateway SMS Management System
+-- Version: 1.2 - With User Authentication
+-- OpenVox/GoIP GSM Gateway SMS Management System
 -- =====================================================
 
 SET NAMES utf8mb4;
@@ -11,6 +12,43 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- -----------------------------------------------------
 -- CREATE DATABASE IF NOT EXISTS sms_panel CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 -- USE sms_panel;
+
+-- -----------------------------------------------------
+-- Table: users (Пользователи)
+-- -----------------------------------------------------
+DROP TABLE IF EXISTS `user_permissions`;
+DROP TABLE IF EXISTS `users`;
+CREATE TABLE `users` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `username` VARCHAR(50) NOT NULL UNIQUE COMMENT 'Логин',
+    `password` VARCHAR(255) NOT NULL COMMENT 'Хеш пароля',
+    `name` VARCHAR(100) NOT NULL COMMENT 'Имя пользователя',
+    `email` VARCHAR(100) DEFAULT NULL COMMENT 'Email',
+    `role` ENUM('admin', 'user') DEFAULT 'user' COMMENT 'Роль',
+    `is_active` TINYINT(1) DEFAULT 1 COMMENT 'Активен',
+    `last_login` DATETIME DEFAULT NULL COMMENT 'Последний вход',
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX `idx_username` (`username`),
+    INDEX `idx_role` (`role`),
+    INDEX `idx_active` (`is_active`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Пользователи';
+
+-- -----------------------------------------------------
+-- Table: user_permissions (Права пользователей на порты)
+-- -----------------------------------------------------
+CREATE TABLE `user_permissions` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `user_id` INT NOT NULL COMMENT 'ID пользователя',
+    `gateway_id` INT NOT NULL COMMENT 'ID шлюза',
+    `port_id` INT DEFAULT NULL COMMENT 'ID порта (NULL = все порты шлюза)',
+    `can_send` TINYINT(1) DEFAULT 1 COMMENT 'Может отправлять',
+    `can_receive` TINYINT(1) DEFAULT 1 COMMENT 'Может читать входящие',
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_user_gateway_port` (`user_id`, `gateway_id`, `port_id`),
+    INDEX `idx_user` (`user_id`),
+    INDEX `idx_gateway` (`gateway_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Права на порты';
 
 -- -----------------------------------------------------
 -- Table: inbox (Входящие SMS)
@@ -56,6 +94,7 @@ CREATE TABLE `outbox` (
 DROP TABLE IF EXISTS `templates`;
 CREATE TABLE `templates` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `user_id` INT DEFAULT NULL COMMENT 'ID владельца',
     `name` VARCHAR(100) NOT NULL COMMENT 'Название шаблона',
     `content` TEXT NOT NULL COMMENT 'Текст шаблона',
     `variables` TEXT DEFAULT NULL COMMENT 'JSON массив переменных',
@@ -63,7 +102,8 @@ CREATE TABLE `templates` (
     `is_active` TINYINT(1) DEFAULT 1 COMMENT 'Активен: 0=нет, 1=да',
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX `idx_active` (`is_active`)
+    INDEX `idx_active` (`is_active`),
+    INDEX `idx_user` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Шаблоны SMS';
 
 -- -----------------------------------------------------
@@ -72,10 +112,12 @@ CREATE TABLE `templates` (
 DROP TABLE IF EXISTS `contact_groups`;
 CREATE TABLE `contact_groups` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `user_id` INT DEFAULT NULL COMMENT 'ID владельца',
     `name` VARCHAR(100) NOT NULL COMMENT 'Название группы',
     `description` TEXT DEFAULT NULL COMMENT 'Описание',
     `color` VARCHAR(7) DEFAULT '#3498db' COMMENT 'Цвет HEX',
-    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX `idx_user` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Группы контактов';
 
 -- -----------------------------------------------------
@@ -84,8 +126,9 @@ CREATE TABLE `contact_groups` (
 DROP TABLE IF EXISTS `contacts`;
 CREATE TABLE `contacts` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `user_id` INT DEFAULT NULL COMMENT 'ID владельца',
     `name` VARCHAR(100) NOT NULL COMMENT 'Имя контакта',
-    `phone_number` VARCHAR(20) NOT NULL UNIQUE COMMENT 'Номер телефона',
+    `phone_number` VARCHAR(20) NOT NULL COMMENT 'Номер телефона',
     `company` VARCHAR(100) DEFAULT NULL COMMENT 'Компания',
     `email` VARCHAR(100) DEFAULT NULL COMMENT 'Email',
     `notes` TEXT DEFAULT NULL COMMENT 'Заметки',
@@ -97,6 +140,7 @@ CREATE TABLE `contacts` (
     INDEX `idx_name` (`name`),
     INDEX `idx_group` (`group_id`),
     INDEX `idx_active` (`is_active`),
+    INDEX `idx_user` (`user_id`),
     CONSTRAINT `fk_contacts_group` FOREIGN KEY (`group_id`) 
         REFERENCES `contact_groups` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Контакты';
@@ -154,6 +198,7 @@ CREATE TABLE `settings` (
 DROP TABLE IF EXISTS `campaigns`;
 CREATE TABLE `campaigns` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `user_id` INT DEFAULT NULL COMMENT 'ID владельца',
     `name` VARCHAR(255) NOT NULL COMMENT 'Название рассылки',
     `message` TEXT NOT NULL COMMENT 'Текст сообщения',
     `total_count` INT DEFAULT 0 COMMENT 'Всего сообщений',
@@ -170,7 +215,8 @@ CREATE TABLE `campaigns` (
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX `idx_status` (`status`),
     INDEX `idx_created` (`created_at`),
-    INDEX `idx_gateway` (`gateway_id`)
+    INDEX `idx_gateway` (`gateway_id`),
+    INDEX `idx_user` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Массовые рассылки';
 
 -- -----------------------------------------------------
@@ -243,21 +289,81 @@ INSERT INTO `templates` (`name`, `content`, `variables`) VALUES
     ('Reminder', 'Dear {name}, reminder: {event} on {date}', '["name","event","date"]')
 ON DUPLICATE KEY UPDATE `name` = `name`;
 
+-- Default admin user (password: admin123)
+INSERT INTO `users` (`username`, `password`, `name`, `role`, `is_active`) VALUES
+    ('admin', '$2y$10$N9qo8uLOickgx2ZMRZoMyeNw/O3z5BKQXB1KdJH5LrM3F5z2DlWHW', 'Administrator', 'admin', 1)
+ON DUPLICATE KEY UPDATE `username` = `username`;
+
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- =====================================================
 -- SCHEMA SUMMARY
 -- =====================================================
--- Tables: 9
+-- Tables: 12
 -- 
--- inbox            - Входящие SMS
--- outbox           - Исходящие SMS  
--- templates        - Шаблоны SMS
--- contacts         - Контакты
--- contact_groups   - Группы контактов
--- spam_log         - Лог анти-спама
--- settings         - Настройки системы
--- campaigns        - Массовые рассылки
+-- users             - Пользователи системы
+-- user_permissions  - Права на порты
+-- inbox             - Входящие SMS
+-- outbox            - Исходящие SMS  
+-- templates         - Шаблоны SMS
+-- contacts          - Контакты
+-- contact_groups    - Группы контактов
+-- spam_log          - Лог анти-спама
+-- settings          - Настройки системы
+-- campaigns         - Массовые рассылки
 -- campaign_messages - Сообщения рассылок
--- gateway_ports    - Порты шлюза
+-- gateways          - Шлюзы
+-- gateway_ports     - Порты шлюза
 -- =====================================================
+
+-- =====================================================
+-- AUTHORIZATION SYSTEM
+-- =====================================================
+
+-- -----------------------------------------------------
+-- Table: users (Пользователи)
+-- -----------------------------------------------------
+DROP TABLE IF EXISTS `user_ports`;
+DROP TABLE IF EXISTS `users`;
+CREATE TABLE `users` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `username` VARCHAR(50) NOT NULL UNIQUE COMMENT 'Логин',
+    `password` VARCHAR(255) NOT NULL COMMENT 'Хэш пароля',
+    `name` VARCHAR(100) NOT NULL COMMENT 'Имя пользователя',
+    `email` VARCHAR(100) DEFAULT NULL COMMENT 'Email',
+    `role` ENUM('admin', 'user') DEFAULT 'user' COMMENT 'Роль',
+    `is_active` TINYINT(1) DEFAULT 1 COMMENT 'Активен',
+    `last_login` DATETIME DEFAULT NULL COMMENT 'Последний вход',
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX `idx_username` (`username`),
+    INDEX `idx_role` (`role`),
+    INDEX `idx_active` (`is_active`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Пользователи системы';
+
+-- -----------------------------------------------------
+-- Table: user_ports (Доступ пользователей к портам)
+-- -----------------------------------------------------
+CREATE TABLE `user_ports` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `user_id` INT NOT NULL COMMENT 'ID пользователя',
+    `gateway_id` INT NOT NULL COMMENT 'ID шлюза',
+    `port_id` INT NOT NULL COMMENT 'ID порта',
+    `can_send` TINYINT(1) DEFAULT 1 COMMENT 'Может отправлять',
+    `can_receive` TINYINT(1) DEFAULT 1 COMMENT 'Может получать',
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_user_port` (`user_id`, `port_id`),
+    INDEX `idx_user` (`user_id`),
+    INDEX `idx_gateway` (`gateway_id`),
+    CONSTRAINT `fk_userport_user` FOREIGN KEY (`user_id`) 
+        REFERENCES `users` (`id`) ON DELETE CASCADE,
+    CONSTRAINT `fk_userport_gateway` FOREIGN KEY (`gateway_id`) 
+        REFERENCES `gateways` (`id`) ON DELETE CASCADE,
+    CONSTRAINT `fk_userport_port` FOREIGN KEY (`port_id`) 
+        REFERENCES `gateway_ports` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Доступ к портам';
+
+-- Default admin user (password: admin123)
+INSERT INTO `users` (`username`, `password`, `name`, `role`, `is_active`) VALUES
+    ('admin', '$2y$10$N9qo8uLOickgx2ZMRZoMyeNw/O3z5BKQXB1KdJH5LrM3F5z2DlWHW', 'Administrator', 'admin', 1)
+ON DUPLICATE KEY UPDATE `username` = `username`;

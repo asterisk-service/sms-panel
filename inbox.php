@@ -59,12 +59,20 @@ if (isset($_GET['success'])) {
 
 require_once __DIR__ . '/templates/layout.php';
 
+// Get auth and allowed ports for filtering
+$auth = Auth::getInstance();
+$allowedPortNumbers = null;
+if (!$auth->isAdmin()) {
+    $allowedPorts = $auth->getAllowedPorts('can_receive');
+    $allowedPortNumbers = array_column($allowedPorts, 'port_number');
+}
+
 // Filters
 $page = max(1, (int)($_GET['page'] ?? 1));
 $search = $_GET['search'] ?? '';
 $filter = $_GET['filter'] ?? '';
 
-$data = $sms->getInbox($page, 20, $search, $filter === 'unread');
+$data = $sms->getInbox($page, 20, $search, $filter === 'unread', $allowedPortNumbers);
 
 renderHeader(__('inbox'), 'inbox');
 ?>

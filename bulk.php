@@ -134,20 +134,11 @@ if ($action === 'list') {
 
 $groups = $contactsObj->getGroups();
 
-// Load gateways
+// Load gateways and ports based on user permissions
 require_once __DIR__ . '/includes/sms.php';
-$sms = new SMS();
-$gateways = $sms->getGateways(true);
-
-// Load ports with gateway info
-$db = Database::getInstance();
-$ports = $db->fetchAll(
-    "SELECT gp.*, g.name as gateway_name, g.type as gateway_type 
-     FROM gateway_ports gp 
-     LEFT JOIN gateways g ON gp.gateway_id = g.id 
-     WHERE gp.is_active = 1 
-     ORDER BY g.name, gp.port_number"
-);
+$auth = Auth::getInstance();
+$gateways = $auth->getAllowedGateways('can_send');
+$ports = $auth->getAllowedPorts(null, 'can_send');
 
 renderHeader(__('bulk_sms'), 'bulk');
 ?>

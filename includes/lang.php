@@ -24,6 +24,11 @@ function getCurrentLang() {
     return DEFAULT_LANG;
 }
 
+// Alias for getCurrentLang
+function getCurrentLanguage() {
+    return getCurrentLang();
+}
+
 // Load translations
 function loadTranslations($lang) {
     $file = __DIR__ . "/lang/{$lang}.php";

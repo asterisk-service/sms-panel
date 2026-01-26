@@ -451,7 +451,7 @@ class SMS {
     /**
      * Get inbox messages
      */
-    public function getInbox($page = 1, $perPage = 20, $search = '', $unreadOnly = false) {
+    public function getInbox($page = 1, $perPage = 20, $search = '', $unreadOnly = false, $portNumbers = null) {
         $offset = ($page - 1) * $perPage;
         $where = '1=1';
         $params = [];
@@ -464,6 +464,16 @@ class SMS {
 
         if ($unreadOnly) {
             $where .= " AND is_read = 0";
+        }
+        
+        // Filter by allowed ports (for non-admin users)
+        if ($portNumbers !== null && !empty($portNumbers)) {
+            $placeholders = implode(',', array_fill(0, count($portNumbers), '?'));
+            $where .= " AND port IN ({$placeholders})";
+            $params = array_merge($params, $portNumbers);
+        } elseif ($portNumbers !== null && empty($portNumbers)) {
+            // User has no allowed ports - return empty result
+            return ['messages' => [], 'total' => 0, 'pages' => 0, 'current_page' => $page];
         }
 
         $total = $this->db->fetchOne(
@@ -492,7 +502,7 @@ class SMS {
     /**
      * Get outbox messages
      */
-    public function getOutbox($page = 1, $perPage = 20, $search = '', $status = '') {
+    public function getOutbox($page = 1, $perPage = 20, $search = '', $status = '', $portNumbers = null) {
         $offset = ($page - 1) * $perPage;
         $where = '1=1';
         $params = [];
@@ -506,6 +516,16 @@ class SMS {
         if ($status) {
             $where .= " AND status = ?";
             $params[] = $status;
+        }
+        
+        // Filter by allowed ports (for non-admin users)
+        if ($portNumbers !== null && !empty($portNumbers)) {
+            $placeholders = implode(',', array_fill(0, count($portNumbers), '?'));
+            $where .= " AND port IN ({$placeholders})";
+            $params = array_merge($params, $portNumbers);
+        } elseif ($portNumbers !== null && empty($portNumbers)) {
+            // User has no allowed ports - return empty result
+            return ['messages' => [], 'total' => 0, 'pages' => 0, 'current_page' => $page];
         }
 
         $total = $this->db->fetchOne(
